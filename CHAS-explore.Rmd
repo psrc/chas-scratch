@@ -1,0 +1,318 @@
+---
+title: "RDI: CHAS explore"
+output: html_notebook
+---
+
+Existing work:
+
+Doesn't apply to current work
+- Used the API to extract county data for 2018 (see `housing-metrics` repo). API's latest and greatest are limited to previous year and select geographies
+- Elmer contains tract level Table 9 subset (not all estimates) (see `housing-metrics` repo)
+
+Notes:
+
+- Latest dataset is 2015-2019 only available via download
+- Experiment with T9 (Cost burden), T8 (Rental Affordability)
+
+Shiny UI:
+
+- User selects Jurisdiction & ACS Dataset, what about CHAS data?
+
+For Elmer:
+
+- Really useful to include headers as I'm extracting rows (e.g. T8_est1, T8_est2), having sort column creates factor and logical order.
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(openxlsx)
+library(odbc)
+library(DBI)
+
+# connect to Elmer
+db.connect <- function(adatabase) {
+  elmer_connection <- dbConnect(odbc(),
+                                driver = "SQL Server",
+                                server = "AWS-PROD-SQL\\Sockeye",
+                                database = adatabase,
+                                trusted_connection = "yes"
+  )
+}
+
+# read table
+read.dt <- function(adatabase, type = c('table', 'query'), string) {
+  elmer_connection <- db.connect(adatabase)
+  if(type == 'table') dtelm <- dbReadTable(elmer_connection, SQL(atable))
+  if(type == 'query') dtelm <- dbGetQuery(elmer_connection, SQL(string))
+  dbDisconnect(elmer_connection)
+  setDT(dtelm)
+}
+
+# read-in CHAS data dictionary
+sheets <- c('8', '9', '15C', '14B')
+
+```
+
+# Place
+```{r}
+
+
+lookups <- list()
+
+for(i in 1:length(sheets)) {
+  lu <- read.xlsx('160//CHAS data dictionary 15-19.xlsx', sheet = paste('Table', sheets[i]))
+  setDT(lu)
+
+  lu_moe <- copy(lu) 
+  lu_moe[, Column.Name := str_replace_all(Column.Name, 'est', 'moe')]
+  l <- rbindlist(list(lu, lu_moe))
+  lookups[[i]] <- l
+}
+```
+
+```{r}
+# place (data download)
+dir <- 'C:\\Users\\CLam\\github\\chas\\160' # contains tables 1-18
+
+tables <- c('Table8', 'Table9', 'Table15C', 'Table14B')
+dfs <- map(tables, ~fread(file.path(dir, paste0(.x, '.csv'))))
+names(dfs) <- tables
+
+# filter for WA geogs
+dfs <- map(dfs, ~.x[st == 53, ][, geoid_short := str_extract(geoid, '(?<=S).*')])
+
+# join with Elmer, filter for PSRC geogs
+sql_string <- "SELECT * FROM census.geography_dim WHERE summary_level = 160;"
+place_lu <- read.dt('Elmer', type = 'query', sql_string)
+place_lu <- place_lu[geography_type == 'Place', .(geography_name, geography_type, geography_type_abbreviation, place_geoid)][, place_geoid := str_trim(place_geoid)]
+
+dfs <- map(dfs, ~merge(.x, place_lu, by.x = 'geoid_short', by.y = 'place_geoid'))
+
+# pivot long
+tcols <- map(dfs, ~str_subset(colnames(.x), "^T.*"))
+icols <- map2(dfs, tcols, ~setdiff(colnames(.x), .y))
+
+dfs <- pmap(list(dfs, icols, tcols), ~melt.data.table(..1, id.vars = ..2, measure.vars = ..3, variable.name = 'headers', value.name = 'value'))
+
+# join header
+dfs <- map2(dfs, lookups, ~merge(.x, .y, by.x = 'headers', by.y = 'Column.Name'))
+dfs <- map(dfs, ~.x[, sort := as.numeric(str_extract(headers, "\\d*$"))][order(sort)])
+
+```
+
+### Test with all Places
+```{r Rental Affordability Setup}
+desc <- c('Extremely Low Income (<30% AMI)', 'Very Low Income (30-50% AMI)', 'Low Income (50-80% AMI)', 'Moderate Income (80-100% AMI)', 'Greater than 100% of AMI', 'All')
+
+# Table 8 
+t8_head <- c(69, 82, 95, 108, 121, 68)
+names(t8_head) <- desc
+t8 <- dfs$Table8[sort %in% t8_head, ]
+t8 <- t8[, `:=`(sort = factor(sort, levels = t8_head), col_desc = 'renter_hh_income')][order(sort)]
+t8$description <- names(t8_head)[t8$sort]
+
+# Table 15C
+t15c_head <- c(4, 25, 46, 67, 3)
+t15c_desc <- c(desc[1:4], desc[6])
+names(t15c_head) <- t15c_desc
+t15c <- dfs$Table15C[sort %in% t15c_head, ]
+t15c <- t15c[, `:=` (sort = factor(sort, levels = t15c_head), col_desc = 'rental_unit_affordability')][order(sort)]
+t15c$description <- names(t15c_head)[t15c$sort]
+
+# Table 14B
+t14b_head <- c(4, 8, 12, 16, 3)
+t14b_desc <- c(desc[1:4], desc[6])
+names(t14b_head) <- t14b_desc
+t14b <- dfs$Table14B[sort %in% t14b_head, ]
+t14b <- t14b[, `:=` (sort = factor(sort, levels = t14b_head), col_desc = 'vacant_rental_units')][order(sort)]
+t14b$description <- names(t14b_head)[t14b$sort]
+
+# select common columns
+cols <- c('headers', 'sort', 'geoid_short','source','sumlevel','name', 'geography_name', 'value', 'col_desc', 'description')
+ra_dfs <- map(list(t8, t15c, t14b), ~.x[, ..cols])
+df <- rbindlist(ra_dfs)
+
+# pivot wider
+df[, `:=` (type = str_extract(headers, "(?<=_)\\w{3}"), table = str_extract(headers, "^.*(?=_)"))]
+df <- dcast.data.table(df, geoid_short + source + sumlevel + name + geography_name + type + description ~ col_desc, value.var = 'value')
+
+# reorder rows
+df <- df[, description := factor(description, levels = desc)][order(description)]
+
+# filter/order columns
+setcolorder(df, c('geoid_short', 'source', 'sumlevel', 'name', 'geography_name', 'type', 'description', 'renter_hh_income', 'rental_unit_affordability', 'vacant_rental_units'))
+
+
+```
+
+Renter_hh_income = Households, rental_unit_affordability + vacant_rental_units = Rental Units
+Create %
+What to do with MOE? include in calculations?
+
+```{r Rental Affordability Calculations}
+df_ra <- df[type == 'est', ][, rental_units := rental_unit_affordability + vacant_rental_units]
+df_tot <- dcast.data.table(df_ra, geoid_short + geography_name ~ description, value.var = c('renter_hh_income', 'rental_units'), subset = .(description == 'All'))
+df_ra <- merge(df_ra, df_tot, by = c('geoid_short', 'geography_name'))
+
+df_ra[, `:=` (renter_hh_income_share = renter_hh_income/renter_hh_income_All, rental_units_share = rental_units/rental_units_All)]
+
+```
+
+
+- Create function to generate formatted tables by tab.
+  - Table 8/15/14 (Rental Affordability function)
+  - create for place, ...county? region?
+
+### Counties & Region
+```{r Rent Affordability County Setup}
+# read-in CHAS data dictionary
+lookups_cnty <- list()
+
+for(i in 1:length(sheets)) {
+  lu <- read.xlsx('050//CHAS data dictionary 15-19.xlsx', sheet = paste('Table', sheets[i]))
+  setDT(lu)
+
+  lu_moe <- copy(lu) 
+  lu_moe[, Column.Name := str_replace_all(Column.Name, 'est', 'moe')]
+  l <- rbindlist(list(lu, lu_moe))
+  lookups_cnty[[i]] <- l
+}
+
+# counties (data download)
+dir <- 'C:\\Users\\CLam\\github\\chas\\050' # contains tables 1-18
+
+tables <- c('Table8', 'Table9', 'Table15C', 'Table14B')
+dfs <- map(tables, ~fread(file.path(dir, paste0(.x, '.csv'))))
+names(dfs) <- tables
+
+# filter for WA geogs
+dfs <- map(dfs, ~.x[st == 53 & cnty %in% c(33, 35, 53, 61), ][, geoid_short := str_extract(geoid, '(?<=S).*')])
+
+# pivot long
+tcols <- map(dfs, ~str_subset(colnames(.x), "^T.*"))
+icols <- map2(dfs, tcols, ~setdiff(colnames(.x), .y))
+
+dfs <- pmap(list(dfs, icols, tcols), ~melt.data.table(..1, id.vars = ..2, measure.vars = ..3, variable.name = 'headers', value.name = 'value'))
+
+# join header
+dfs <- map2(dfs, lookups_cnty, ~merge(.x, .y, by.x = 'headers', by.y = 'Column.Name'))
+dfs <- map(dfs, ~.x[, sort := as.numeric(str_extract(headers, "\\d*$"))][order(sort)])
+
+
+```
+
+```{r Rent Affordability County prep}
+desc <- c('Extremely Low Income (<30% AMI)', 'Very Low Income (30-50% AMI)', 'Low Income (50-80% AMI)', 'Moderate Income (80-100% AMI)', 'Greater than 100% of AMI', 'All')
+
+# Table 8 
+t8_head <- c(69, 82, 95, 108, 121, 68)
+names(t8_head) <- desc
+t8 <- dfs$Table8[sort %in% t8_head, ]
+t8 <- t8[, `:=`(sort = factor(sort, levels = t8_head), col_desc = 'renter_hh_income')][order(sort)]
+t8$description <- names(t8_head)[t8$sort]
+
+# Table 15C
+t15c_head <- c(4, 25, 46, 67, 3)
+t15c_desc <- c(desc[1:4], desc[6])
+names(t15c_head) <- t15c_desc
+t15c <- dfs$Table15C[sort %in% t15c_head, ]
+t15c <- t15c[, `:=` (sort = factor(sort, levels = t15c_head), col_desc = 'rental_unit_affordability')][order(sort)]
+t15c$description <- names(t15c_head)[t15c$sort]
+
+# Table 14B
+t14b_head <- c(4, 8, 12, 16, 3)
+t14b_desc <- c(desc[1:4], desc[6])
+names(t14b_head) <- t14b_desc
+t14b <- dfs$Table14B[sort %in% t14b_head, ]
+t14b <- t14b[, `:=` (sort = factor(sort, levels = t14b_head), col_desc = 'vacant_rental_units')][order(sort)]
+t14b$description <- names(t14b_head)[t14b$sort]
+
+# select common columns (name == geography_name)
+cols <- c('headers', 'sort', 'geoid_short','source','sumlevel','name', 'value', 'col_desc', 'description')
+ra_dfs <- map(list(t8, t15c, t14b), ~.x[, ..cols])
+df <- rbindlist(ra_dfs)
+df[, geography_name := str_extract(name, ".*(?=,)")]
+
+# pivot wider
+df[, `:=` (type = str_extract(headers, "(?<=_)\\w{3}"), table = str_extract(headers, "^.*(?=_)"))]
+df <- dcast.data.table(df, geoid_short + source + sumlevel + name + geography_name + type + description ~ col_desc, value.var = 'value')
+
+# reorder rows
+df <- df[, description := factor(description, levels = desc)][order(description)]
+
+# filter/order columns
+setcolorder(df, c('geoid_short', 'source', 'sumlevel', 'name', 'geography_name', 'type', 'description', 'renter_hh_income', 'rental_unit_affordability', 'vacant_rental_units'))
+
+```
+
+```{r Rental Affordability County Calculations}
+df_ra <- df[type == 'est', ][, rental_units := rental_unit_affordability + vacant_rental_units]
+df_tot <- dcast.data.table(df_ra, geoid_short + geography_name ~ description, value.var = c('renter_hh_income', 'rental_units'), subset = .(description == 'All'))
+df_ra <- merge(df_ra, df_tot, by = c('geoid_short', 'geography_name'))
+
+df_ra[, `:=` (renter_hh_income_share = renter_hh_income/renter_hh_income_All, rental_units_share = rental_units/rental_units_All)]
+```
+
+```{r Rental Affordability Region Calculations}
+# calculate region
+df_ra_reg <- df_ra[, lapply(.SD, sum), .SDcols = c("renter_hh_income", "rental_unit_affordability",  "vacant_rental_units", "rental_units"), by = c('type', 'description')
+                   ][, geography_name := 'Region']
+df_reg_tot <- dcast.data.table(df_ra_reg, geography_name ~ description, value.var = c('renter_hh_income', 'rental_units'), subset = .(description == 'All'))
+df_ra_reg <- merge(df_ra_reg, df_reg_tot, by = c('geography_name'))
+df_ra_reg[, `:=` (renter_hh_income_share = renter_hh_income/renter_hh_income_All, rental_units_share = rental_units/rental_units_All)]
+```
+
+
+
+
+# Tracts
+```{r}
+# read-in CHAS data dictionary
+sheets <- c('8', '9')#, '14B', '15C')
+
+lookups <- list()
+
+for(i in 1:length(sheets)) {
+  lu <- read.xlsx('140//CHAS data dictionary 15-19.xlsx', sheet = paste('Table', sheets[i]))
+  setDT(lu)
+
+  lu_moe <- copy(lu) 
+  lu_moe[, Column.Name := str_replace_all(Column.Name, 'est', 'moe')]
+  l <- rbindlist(list(lu, lu_moe))
+  lookups[[i]] <- l
+}
+```
+
+
+```{r}
+# Tracts (data download)
+dir <- 'C:\\Users\\CLam\\github\\chas\\140' # contains tables 1-18
+
+tables <- c('Table8', 'Table9')
+dfs <- map(tables, ~fread(file.path(dir, paste0(.x, '.csv'))))
+names(dfs) <- tables
+
+# filter for PSRC geogs
+counties <- c(33, 35, 53, 61)
+dfs <- map(dfs, ~.x[st == 53 & cnty %in% counties, ][, geoid_short := str_extract(geoid, '(?<=S).*')])
+
+# pivot long
+tcols <- map(dfs, ~str_subset(colnames(.x), "^T.*"))
+icols <- map2(dfs, tcols, ~setdiff(colnames(.x), .y))
+
+dfs <- pmap(list(dfs, icols, tcols), ~melt.data.table(..1, id.vars = ..2, measure.vars = ..3, variable.name = 'headers', value.name = 'value'))
+
+# join header 
+dfs <- map2(dfs, lookups, ~merge(.x, .y, by.x = 'headers', by.y = 'Column.Name'))
+
+
+```
+
+# Tables
+
+## Cost Burden (T9)
+```{r}
+
+```
+
+
