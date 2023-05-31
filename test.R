@@ -60,16 +60,20 @@ create_cost_burden_table <- function() {
                             cost_burden == "All", "All")]
  
   
-  # total cost burdened (new row)
+  # total cost/not-cost burdened (new rows)
   tot_cb <- df[description %in% c("Cost-Burdened (30-50%)", "Severely Cost-Burdened (>50%)"), 
                .(estimate = sum(estimate), cost_burden = 'Total Cost-Burdened', description = 'Total Cost-Burdened'),
                by = c('geography_name', 'geography_type_abbreviation', 'chas_year', 'tenure', 'race_ethnicity')]
   
-  df <- rbindlist(list(df, tot_cb), use.names = TRUE, fill = TRUE)
+  tot_ncb <- df[description %in% c('Not Calculated', 'No Cost Burden'), 
+                .(estimate = sum(estimate), cost_burden = 'Total Not Cost-Burdened', description = 'Total Not Cost-Burdened'), 
+                by = c('geography_name', 'geography_type_abbreviation', 'chas_year', 'tenure', 'race_ethnicity')]
+  
+  df <- rbindlist(list(df, tot_cb, tot_ncb), use.names = TRUE, fill = TRUE)
   
   # total (for horizontal sum)
   tot <- df[, .(estimate = sum(estimate), race_ethnicity = 'Total'), by = c('geography_name', 'geography_type_abbreviation', 'chas_year', 'tenure', 'cost_burden', 'description')]
-  
+ 
   # poc (for column)
   poc <- df[race_ethnicity != str_subset(unique(df$race_ethnicity), "^W.*"), .(estimate = sum(estimate), race_ethnicity = 'POC'), 
             by = c('geography_name', 'geography_type_abbreviation', 'chas_year', 'tenure', 'cost_burden', 'description')]
@@ -77,7 +81,7 @@ create_cost_burden_table <- function() {
   df <- rbindlist(list(df, poc, tot), use.names = TRUE, fill = TRUE)
   
   # factor description
-  df[, description := factor(description, levels = c(names(desc), 'Total Cost-Burdened'))]
+  df[, description := factor(description, levels = c(names(desc), 'Total Cost-Burdened', 'Total Not Cost-Burdened'))]
   race_levels <- c(str_subset(unique(df$race_ethnicity), "^American.*"),
                    str_subset(unique(df$race_ethnicity), "^Asian.*"),
                    str_subset(unique(df$race_ethnicity), "^Black.*"),
@@ -91,8 +95,20 @@ create_cost_burden_table <- function() {
                    )
   df[, race_ethnicity := factor(race_ethnicity, levels = race_levels)]
   
-  df <- dcast.data.table(df, chas_year + geography_name + tenure + description ~ race_ethnicity, value.var = 'estimate')
+  # add denominator column
+  df_denom <- df[cost_burden == 'All', 
+                   .(geography_name, geography_type_abbreviation, chas_year, tenure, race_ethnicity, estimate_denom = estimate)]
+  df <- merge(df, df_denom, by = c('geography_name', 'geography_type_abbreviation', 'chas_year', 'tenure', 'race_ethnicity')) 
   
+  # calculate shares
+  df[, share := estimate/estimate_denom]
+  
+  # calculate estimates
+  df_est <- dcast.data.table(df, chas_year + geography_name + tenure + description ~ race_ethnicity, value.var = 'estimate')
+  df_share <- dcast.data.table(df, chas_year + geography_name + tenure + description ~ race_ethnicity, value.var = 'share')
+  df_share[is.na(df_share)] <- 0
+  
+  return(list(e = df_est, s = df_share))
 }
 
 cb <- create_cost_burden_table()
