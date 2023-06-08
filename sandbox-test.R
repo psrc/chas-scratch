@@ -5,6 +5,8 @@ library(odbc)
 library(DBI)
 
 # Function to assemble Rental Affordability
+# Function to assemble Cost Burden
+
 # connect to Elmer
 db.connect <- function(adatabase) {
   elmer_connection <- dbConnect(odbc(),
@@ -35,6 +37,25 @@ gather_tables <- function(chas_table_codes) {
   return(dfs)
 }
 
+create_income_table <- function() {
+  # gather tables T1 to create formatted Income table
+  
+  chas_tables <- 'T1'
+  dfs <- gather_tables(chas_tables)
+  df <- dfs$T1[!(sort %in% c(1))]
+  
+  # pivot wider (1 of 4 housing problems)
+  # add estimates together & moe sum
+  # add description col
+  df_c <- dcast.data.table(df, geography_name + geography_type_abbreviation + chas_year + tenure + household_income + race_ethnicity ~ `1_of_4_housing_problems`, 
+                   value.var = c('estimate'))
+  
+  # test----
+  x <- df[geography_name == 'Bellevue']
+}
+
+inc <- create_income_table()
+
 create_cost_burden_table <- function() {
   # gather tables T9 to create formatted Cost Burden table
   
@@ -50,7 +71,7 @@ create_cost_burden_table <- function() {
             "not computed (no/negative income)",
             "All")
   
-  names(desc) <- c("No Cost Burden", "Cost-Burdened (30-50%)", "Severely Cost-Burdened (>50%)", "Not Calculated", "All" )
+  names(desc) <- c("No Cost Burden", "Cost-Burdened (30-50%)", "Severely Cost-Burdened (>50%)", "Not Calculated", "All")
 
   # pivot wider
   df[, description := fcase(cost_burden == "less than or equal to 30%", "No Cost Burden",
