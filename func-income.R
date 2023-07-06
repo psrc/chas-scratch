@@ -51,8 +51,7 @@ create_income_table <- function() {
   
   ## Format Table ----
   
-  # join owner & renter tables
-  
+  # join all AMI tables into one
   all_dfs <-map(list(t1_30,t1_30_50,t1_50_80,t1_80_100,t1_100), ~.x[, ..cols])
   df <- rbindlist(all_dfs)
   
@@ -82,10 +81,10 @@ create_income_table <- function() {
   # reorder rows
   df <- df[, description := factor(description, levels = desc)][order(description)]
   
-  # Calculate Table ----
+  # calculate column total  ----
   df_ra <- df[, Total := `American Indian or Alaskan Native` + `Asian` + `Black or African American` + `Hispanic or Latino (of any race)` +  `Pacific Islander` + `White`]
 
-  # calculate totals/shares
+  # calculate row totals/shares
   df_ra <- df_ra %>%
     bind_rows(summarise(., across(c(`American Indian or Alaskan Native`,`Asian`,`Black or African American`,`Hispanic or Latino (of any race)`,`Pacific Islander`,`White`,`Total`), sum),
                         across(where(is.character), ~'Total')))
