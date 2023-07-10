@@ -2,7 +2,7 @@
 
 source('config.R')
 
-create_rental_affordability_table <- function() {
+create_rental_affordability_table <- function(juris = c('place', 'county')) {
   # gather tables T8, T15C, and T14B to create formatted Rental Affordability table
   
   chas_tables <- c('T8', 'T15C', 'T14B')
