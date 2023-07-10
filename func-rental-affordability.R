@@ -6,7 +6,7 @@ create_rental_affordability_table <- function() {
   # gather tables T8, T15C, and T14B to create formatted Rental Affordability table
   
   chas_tables <- c('T8', 'T15C', 'T14B')
-  dfs <- gather_tables(chas_tables)
+  dfs <- gather_tables(juris, chas_tables)
   
   # Assemble Table ----
   
@@ -47,6 +47,13 @@ create_rental_affordability_table <- function() {
   df <- rbindlist(ra_dfs)
   
   ## Format Table ----
+  
+  if(juris == 'county') {
+    # aggregate counties to region
+    
+    df <- df[, .(estimate = sum(estimate)), by = c('variable_name', 'sort', 'chas_year', 'description', 'col_desc')
+    ][, geography_name := 'Region'] 
+  }
   
   # pivot wider
   df <- dcast.data.table(df, chas_year + geography_name + description ~ col_desc, value.var = 'estimate')
