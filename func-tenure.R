@@ -66,4 +66,6 @@ create_tenure_table <- function() {
   # calculate shares
   df_ra$renter_share <- df_ra$renter_occupied/df_ra$all_units
   df_ra$owner_share <- df_ra$owner_occupied/df_ra$all_units
+  
+  return(df_ra)
 }
