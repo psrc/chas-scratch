@@ -2,11 +2,12 @@
 
 source('config.R')
 
-create_rental_affordability_table <- function(juris = c('place', 'county')) {
+create_rental_affordability_table <- function(juris = c('place', 'region')) {
   # gather tables T8, T15C, and T14B to create formatted Rental Affordability table
   
   chas_tables <- c('T8', 'T15C', 'T14B')
-  dfs <- gather_tables(juris, chas_tables)
+  ifelse(juris == 'place', j <- 'place', j <- 'county')
+  dfs <- gather_tables(j, chas_tables)
   
   # Assemble Table ----
   
@@ -48,7 +49,7 @@ create_rental_affordability_table <- function(juris = c('place', 'county')) {
   
   ## Format Table ----
   
-  if(juris == 'county') {
+  if(juris == 'region') {
     # aggregate counties to region
     
     df <- df[, .(estimate = sum(estimate)), by = c('variable_name', 'sort', 'chas_year', 'description', 'col_desc')
