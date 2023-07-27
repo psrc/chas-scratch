@@ -7,7 +7,7 @@ library(data.table)
 sqldb.connect <- function() {
   # connect to SQLite db
   
-  dbConnect(SQLite(), "chas_2023-07-11.db")
+  dbConnect(SQLite(), "chas_2023-07-26.db")
 }
 
 
