@@ -71,7 +71,7 @@ create_income_table <- function() {
                          description == 'Moderate Income (80-100% AMI)', 'Greater than 80% AMI')]
   
   df <- df %>%
-    group_by(col_desc, race_ethnicity) %>%
+    group_by(grouping, race_ethnicity) %>%
     summarize(geography_name = first(geography_name),
               estimate = sum(estimate),
               chas_year = first(chas_year),
