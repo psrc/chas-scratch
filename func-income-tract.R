@@ -1,10 +1,10 @@
 # Function to assemble Income table
 
-source('config.R')
+# source('config.R')
 source('function-query-sqlite-chas.R')
-library(dplyr)
-library(tidyverse)
-library(data.table)
+# library(dplyr)
+# library(tidyverse)
+# library(data.table)
 
 create_income_table <- function() {
   
@@ -19,8 +19,9 @@ create_income_table <- function() {
             'Moderate Income (80-100%)',
             'Above Median Income (>100%)')
   
-  cols <- c('variable_name', 'sort','chas_year', 'geography_name', 'estimate', 'moe',  'col_desc', 'race_ethnicity')
-  
+  cols <- c('variable_name', 'sort','chas_year', 'tract_geoid', 'estimate', 'moe',  'col_desc', 'race_ethnicity')
+  # cols <- c('variable_name', 'sort','chas_year', 'geography_name', 'estimate', 'moe',  'col_desc', 'race_ethnicity')
+
   # Table 1 - select fields based on data vintage
   ifelse(dfs$T1$chas_year <= '2014',
          
@@ -58,7 +59,7 @@ create_income_table <- function() {
   ## Format Table ----
   
   # join all AMI tables into one
-  all_dfs <-map(list(t1_30,t1_30_50,t1_50_80,t1_80_100,t1_100), ~.x[, ..cols])
+  all_dfs <-map(list(t1_30, t1_30_50, t1_50_80, t1_80_100, t1_100), ~.x[, ..cols]) #### geography_name not found
   df <- rbindlist(all_dfs)
   
   #df <- df %>% filter(df$geography_name == "Bellevue")
@@ -109,4 +110,6 @@ create_income_table <- function() {
                 `Hispanic or Latino (of any race)_share` = `Hispanic or Latino (of any race)`/Total,
                 `Pacific Islander_share` = `Pacific Islander`/Total,
                 White_share = White/Total)]
- }
+}
+
+x <- create_income_table()
