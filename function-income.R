@@ -36,19 +36,38 @@ create_income_table <- function(juris = c('place', 'region')) {
   
   # exclude high level totals
   df <- dfs$T1[!(sort %in% c(1, 2, 75)),]
-  # df <- df[, ..cols]
-  df <- df[geography_name == 'Bellevue', ..cols
-           ][, income_grp := factor(income_grp, levels = desc)]
+
+  df <- df[, ..cols][, income_grp := factor(income_grp, levels = desc)]
+  
+  # df <- df[geography_name == 'Bellevue', ..cols
+  #          ][, income_grp := factor(income_grp, levels = desc)
+  #            ]
+  
+  race_levels <- c(str_subset(unique(df$race_ethnicity_grp), "^American.*"),
+                   str_subset(unique(df$race_ethnicity_grp), "^Asian.*"),
+                   str_subset(unique(df$race_ethnicity_grp), "^Black.*"),
+                   str_subset(unique(df$race_ethnicity_grp), "^Pacific.*"),
+                   str_subset(unique(df$race_ethnicity_grp), "^Other.*"),
+                   'People of Color',
+                   str_subset(unique(df$race_ethnicity_grp), "^Hispanic.*"),
+                   str_subset(unique(df$race_ethnicity_grp), "^White.*"),
+                   'All Races')
+  
+  df[, race_ethnicity_grp := factor(race_ethnicity_grp, levels = race_levels)]
+  
+  if(juris == 'region') {
+    # aggregate counties to region
+    
+    df <- df[, .(estimate = sum(estimate)), by = c('variable_name', 'sort', 'chas_year', 'income_grp', 'race_ethnicity_grp', 'tenure')
+    ][, geography_name := 'Region'] 
+  }
+  
   df_sum <- df[, .(estimate = sum(estimate)), by = c('chas_year', 'geography_name', 'tenure', 'income_grp', 'race_ethnicity_grp')]
+
   # df_cast <- dcast.data.table(df_sum, chas_year + geography_name + tenure + income_grp ~ race_ethnicity_grp, value.var = 'estimate')
   # openxlsx::write.xlsx(df_cast, 'test-tract-agg-bellevue.xlsx' )
   
-  # test ----
-  
-  
-  # end test
-  
-  # sum each race/ethnicity
+  # sum each race/ethnicity/POC
   tot_resp_race <- df_sum[income_grp != 'All' & race_ethnicity_grp != 'All Races', .(estimate = sum(estimate), income_grp = 'All'), 
                   by = c('chas_year', 'geography_name', 'tenure', 'race_ethnicity_grp')]
   
@@ -61,14 +80,15 @@ create_income_table <- function(juris = c('place', 'region')) {
   # combine
   df_all <- rbindlist(list(df_sum, tot_resp_race, poc, tot_poc), use.names=TRUE, fill = TRUE)
   
-  # add denom to calc shares
+  # incorporate race/ethnicity, poc, and all income totals for denominator column
   denom <- rbindlist(list(tot_resp_race, tot_poc), use.names=TRUE)
   setnames(denom, 'estimate', 'denom')
   denom[, income_grp:= NULL]
-  all <- df_all[income_grp == 'All' & race_ethnicity_grp == 'All Races', 
-                ][, income_grp := NULL]
+  
+  all <- df_all[income_grp == 'All' & race_ethnicity_grp == 'All Races', ][, income_grp := NULL]
   setnames(all, 'estimate', 'denom')
   denom <- rbindlist(list(denom, all))
+  
   df_join <- merge(df_all, denom, by =  c('chas_year', 'geography_name', 'tenure', 'race_ethnicity_grp'), all.x = TRUE)
   
   # create shares
@@ -80,15 +100,7 @@ create_income_table <- function(juris = c('place', 'region')) {
   # openxlsx::write.xlsx(df_est, 'test-tract-agg-bellevue-sums.xlsx' )
   df_shr <- dcast.data.table(df_join, chas_year + geography_name + tenure + income_grp ~ race_ethnicity_grp, value.var = 'share')
   
-  # df_cast <- dcast.data.table(df_all, chas_year + geography_name + tenure + income_grp ~ race_ethnicity_grp, value.var = 'estimate')
-  
-  
-  # region
-  
-  # poc
-  
-
-  
+  return(list(e = df_est, s = df_shr))
 }
 
-test <- create_income_table(juris = 'place')
+test <- create_income_table(juris = 'region')
